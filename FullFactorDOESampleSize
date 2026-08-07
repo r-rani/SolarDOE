@@ -1,0 +1,95 @@
+import numpy as np
+import scipy.stats as stats
+import pandas as pd
+
+
+# Set up matrix (3 Cells x 2 Glass x 2 Laminators x 2 Replicates)
+a, b, c, m1 = 3, 2, 2, 2
+N1 = a * b * c * m1  # 24 initial coupon tests
+
+#Read excel with  sample efficiency data
+try:
+file_path = "solar_testing_data.xlsx"
+    df = pd.read_excel(file_path, sheet_name="Structured_Data")
+except Exception:
+    df = pd.read_excel(file_path)
+file_path = "solar_testing_data.xlsx"
+# Raw Efficiency Data (%) 
+data_matrix = np.zeros((a, b, c, m1))
+
+#For example efficiency values , pulling sample data from the trials from an excel sheet 
+for _, row in df.iterrows():
+    i = int(row['Cell_Index'])
+    j = int(row['Glass_Index'])
+    k = int(row['Laminator_Index'])
+    l = int(row['Replicate_Index'])
+data_matrix[i][j][k][l] = float(row["Efficiency"])
+
+# Sum of Squares computation 
+grand_sum = np.sum(data_matrix)
+CF = (grand_sum ** 2) / N1
+SST = np.sum(data_matrix ** 2) - CF
+
+# Main Effects
+sum_A = np.array([np.sum(data_matrix[i, :, :, :]) for i in range(a)])
+SSA = np.sum(sum_A ** 2) / (b * c * m1) - CF
+
+sum_B = np.array([np.sum(data_matrix[:, j, :, :]) for j in range(b)])
+SSB = np.sum(sum_B ** 2) / (a * c * m1) - CF
+
+sum_C = np.array([np.sum(data_matrix[:, :, k, :]) for k in range(c)])
+SSC = np.sum(sum_C ** 2) / (a * b * m1) - CF
+
+# Interactions
+sum_AB = np.array([[np.sum(data_matrix[i, j, :, :]) for j in range(b)] for i in range(a)])
+SSAB = (np.sum(sum_AB ** 2) / (c * m1)) - CF - SSA - SSB
+
+sum_AC = np.array([[np.sum(data_matrix[i, :, k, :]) for k in range(c)] for i in range(a)])
+SSAC = (np.sum(sum_AC ** 2) / (b * m1)) - CF - SSA - SSC
+
+sum_BC = np.array([[np.sum(data_matrix[:, j, k, :]) for k in range(c)] for j in range(b)])
+SSBC = (np.sum(sum_BC ** 2) / (a * m1)) - CF - SSB - SSC
+
+sum_ABC = np.array([[[np.sum(data_matrix[i, j, k, :]) for k in range(c)] for j in range(b)] for i in range(a)])
+SSABC = (np.sum(sum_ABC ** 2) / m1) - CF - SSA - SSB - SSC - SSAB - SSAC - SSBC
+
+# Residual Error
+SSE = SST - (SSA + SSB + SSC + SSAB + SSAC + SSBC + SSABC)
+
+# Mean of squares and the noise 
+dof_E = a * b * c * (m1 - 1)
+MSE = SSE / dof_E
+sigma = np.sqrt(MSE)
+
+MSA = SSA / (a - 1)
+F0_A = MSA / MSE
+p_val_A = 1 - stats.f.cdf(F0_A, a - 1, dof_E)
+
+print(f"=== ANOVA MATRIX RESULTS ===")
+print(f"Error Sum of Squares (SSE): {SSE:.4f}")
+print(f"Error Mean Square (MSE / Noise Floor): {MSE:.4f}")
+print(f"Isolated Process Standard Deviation (sigma): {sigma:.4f}")
+print(f"Cell Factor F-Statistic (F0): {F0_A:.4f} | p-value: {p_val_A:.4f}")
+
+# Power analysis to make new number of replicates 
+target_delta = 0.50
+target_power = 0.85
+alpha = 0.05
+
+optimal_m = None
+for m_cand in range(2, 10):
+    v1 = a - 1
+    v2 = a * b * c * (m_cand - 1)
+    ncp = m_cand * (target_delta ** 2) / (2 * MSE)
+    f_crit = stats.f.ppf(1 - alpha, v1, v2)
+    beta = stats.ncf.cdf(f_crit, v1, v2, ncp)
+    power = 1 - beta
+    
+    if power >= target_power:
+        optimal_m = m_cand
+        break
+
+print(f"\n=== REPLICATE OPTIMIZATION CONCLUSION ===")
+print(f"Target Statistical Power: {target_power * 100}%")
+print(f"Total Replicates Needed per Combination (m_new): {optimal_m}")
+print(f"Additional Coupons to Build: {(optimal_m - m1) * a * b * c}")
